@@ -225,16 +225,46 @@ function countBits(mask) {
 }
 
 function buildCandidates(targets) {
-  const points = [...targets, ...layout.jewels, layout.origin, ...characters.map((character) => character.current).filter(Boolean)];
+  const eligibleTargets = targets.filter((target) => target.eligible);
+  const connectableTargets = eligibleTargets.filter((target) => target.mode !== 'excluded');
+  const points = [...eligibleTargets, layout.origin, ...characters.map((character) => character.current).filter(Boolean)];
   const candidates = new Map();
   const add = (x, y) => {
     const key = `${Math.round(x)},${Math.round(y)}`;
     if (!candidates.has(key)) candidates.set(key, { x: Math.round(x), y: Math.round(y), key });
   };
   points.forEach((point) => add(point.x, point.y));
-  const maxBridge = Math.max(60, ...characters.map((character) => Number(character.lineWidth) || 0)) * 2;
-  for (let i = 0; i < points.length; i++) for (let j = i + 1; j < points.length; j++) {
-    if (gameDistance(points[i], points[j]) <= maxBridge) add((points[i].x + points[j].x) / 2, (points[i].y + points[j].y) / 2);
+  // A node's capture boundary uses the game's distance metric. In screen space
+  // that boundary is an octagon, not a Euclidean circle, so intersect its
+  // actual metric polygons to get useful positions between adjacent nodes.
+  const polygons = connectableTargets.map((target) => {
+    const vertices = [];
+    const sides = 16;
+    for (let i = 0; i < sides; i++) {
+      const angle = (2 * Math.PI * i) / sides;
+      const dx = Math.cos(angle), dy = Math.sin(angle);
+      const unitDistance = gameDistance({ x: 0, y: 0 }, { x: dx, y: dy });
+      const radius = Math.max(0, target.safeReach - 1) / unitDistance;
+      vertices.push({ x: target.x + dx * radius, y: target.y + dy * radius });
+    }
+    return vertices;
+  });
+  const segmentIntersection = (a, b, c, d) => {
+    const abx = b.x - a.x, aby = b.y - a.y, cdx = d.x - c.x, cdy = d.y - c.y;
+    const denominator = abx * cdy - aby * cdx;
+    if (Math.abs(denominator) < 1e-9) return null;
+    const t = ((c.x - a.x) * cdy - (c.y - a.y) * cdx) / denominator;
+    const u = ((c.x - a.x) * aby - (c.y - a.y) * abx) / denominator;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { x: a.x + t * abx, y: a.y + t * aby } : null;
+  };
+  for (let i = 0; i < polygons.length; i++) for (let j = i + 1; j < polygons.length; j++) {
+    const left = connectableTargets[i], right = connectableTargets[j];
+    const centerDistance = gameDistance(left, right);
+    if (centerDistance > left.safeReach + right.safeReach || centerDistance < Math.abs(left.safeReach - right.safeReach)) continue;
+    for (let a = 0; a < polygons[i].length; a++) for (let b = 0; b < polygons[j].length; b++) {
+      const crossing = segmentIntersection(polygons[i][a], polygons[i][(a + 1) % polygons[i].length], polygons[j][b], polygons[j][(b + 1) % polygons[j].length]);
+      if (crossing) add(crossing.x, crossing.y);
+    }
   }
   return [...candidates.values()];
 }
@@ -293,6 +323,11 @@ async function searchRoute(targets, widths, deadline, onProgress) {
         let bestParent = -1, bestGap = -Infinity;
         for (let parentId = 0; parentId < state.positions.length; parentId++) {
           const parentSiteId = state.positions[parentId];
+          const dx = sites[parentSiteId].x - sites[siteId].x;
+          const dy = sites[parentSiteId].y - sites[siteId].y;
+          // Keep the sprite heads visibly separated; co-located characters add
+          // no new node coverage and are practically impossible to place.
+          if (dx * dx + dy * dy < 32 * 32) continue;
           const parentReach = getWidth(state.charIds[parentId], parentSiteId) - safety;
           const gap = gameDistance(sites[parentSiteId], sites[siteId]);
           if (parentReach > gap && parentReach - gap > bestGap) { bestParent = parentId; bestGap = parentReach - gap; }
@@ -330,6 +365,9 @@ async function searchRoute(targets, widths, deadline, onProgress) {
         let parentId = -1, parentSlack = -Infinity;
         for (let index = 0; index < best.positions.length; index++) {
           const parentSiteId = best.positions[index];
+          const dx = sites[parentSiteId].x - sites[siteId].x;
+          const dy = sites[parentSiteId].y - sites[siteId].y;
+          if (dx * dx + dy * dy < 32 * 32) continue;
           const slack = getWidth(best.charIds[index], parentSiteId) - safety - gameDistance(sites[parentSiteId], sites[siteId]);
           if (slack > parentSlack) { parentId = index; parentSlack = slack; }
         }
