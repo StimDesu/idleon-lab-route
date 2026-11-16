@@ -38,6 +38,8 @@ function parseSave(value) {
   const names = Array.isArray(nameValue) ? nameValue : [];
   let lab = getArray(save.Lab);
   if (typeof save.Lab === 'string') lab = getArray(save.Lab);
+  const gemShop = getArray(save.GemItemsPurchased);
+  const tubeBonusSlots = Math.max(0, Number(gemShop[123]) || 0) * 2;
   const coords = getArray(lab[0]);
   const jewelFlags = getArray(lab[14]);
   const found = [];
@@ -51,8 +53,10 @@ function parseSave(value) {
     found.push({
       name: String(names[i] || `Персонаж ${i + 1}`),
       labLevel,
-      current: Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null,
-      lineWidth: Math.floor(50 + 2 * labLevel),
+      current: Number.isFinite(x) && Number.isFinite(y) && !(x === 0 && y === 0) ? { x, y } : null,
+      lineWidth: Math.floor((50 + 2 * labLevel) * (i < tubeBonusSlots ? 1.3 : 1)),
+      tubeBonus: i < tubeBonusSlots ? 30 : 0,
+      lineWidthManual: false,
       imported: true,
       classId: Number(save[`CharacterClass_${i}`]) || 0,
       equipment: getArray(save[`EquipOrder_${i}`])
@@ -123,20 +127,22 @@ function renderCharacters() {
   $('#characters').innerHTML = characters.map((character, index) => {
     const pos = character.current ? `${Math.round(character.current.x)}, ${Math.round(character.current.y)}` : 'ещё не в Mainframe';
     return `<div class="char-row">
-      <div class="char-name"><strong>${escapeHtml(character.name)}</strong><small>${character.imported ? 'из raw JSON' : 'параметры для примера'}</small></div>
+      <div class="char-name"><strong>${escapeHtml(character.name)}</strong><small>${character.imported ? `из raw JSON${character.tubeBonus ? ` · труба +${character.tubeBonus}%` : ''}` : 'параметры для примера'}</small></div>
       <label>Уровень Lab<input data-character="${index}" data-key="labLevel" type="number" min="0" value="${character.labLevel}"></label>
-      <label>Ширина линии<input data-character="${index}" data-key="lineWidth" type="number" min="0" value="${character.lineWidth}"></label>
+      <label title="Предсказанная ширина по формулам игры. Введите фактическую цифру из окна Lab, чтобы задать точное значение.">Ширина линии<input data-character="${index}" data-key="lineWidth" type="number" min="0" value="${lineWidths(character.current)[index]}"></label>
       <div class="current-pos"><small>Сейчас</small><span>${pos}</span></div>
       <button class="remove" data-remove="${index}" aria-label="Удалить ${escapeHtml(character.name)}">×</button>
     </div>`;
   }).join('');
   $('#characters').querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
     const character = characters[Number(input.dataset.character)];
+    if (input.dataset.key === 'lineWidth') character.lineWidthManual = true;
     character[input.dataset.key] = Number(input.value) || 0;
     if (input.dataset.key === 'labLevel' && character.imported) {
-      character.lineWidth = Math.floor(50 + 2 * character.labLevel);
+      character.lineWidth = Math.floor((50 + 2 * character.labLevel) * (1 + (character.tubeBonus || 0) / 100));
+      character.lineWidthManual = false;
       const widthInput = $('#characters').querySelector(`[data-character="${input.dataset.character}"][data-key="lineWidth"]`);
-      if (widthInput) widthInput.value = character.lineWidth;
+      if (widthInput) widthInput.value = lineWidths(character.current)[Number(input.dataset.character)];
     }
     calculateRoute();
   }));
@@ -146,6 +152,14 @@ function renderCharacters() {
     renderCharacters();
     calculateRoute();
   }));
+}
+
+function refreshAutoLineWidths() {
+  characters.forEach((character, index) => {
+    if (character.lineWidthManual) return;
+    const input = $('#characters').querySelector(`[data-character="${index}"][data-key="lineWidth"]`);
+    if (input) input.value = lineWidths(character.current)[index];
+  });
 }
 
 function renderJewels() {
@@ -171,10 +185,19 @@ function lineWidths(site = null) {
   const percent = Number($('#linePct').value) || 0;
   const sapphire = layout.jewels[5];
   return characters.map((character) => {
+    if (character.lineWidthManual) {
+      let exact = Math.max(0, Number(character.lineWidth) || 0);
+      if (acquiredJewels.has(5) && site) {
+        const wasNear = character.current && gameDistance(character.current, sapphire) < 150;
+        const willBeNear = gameDistance(site, sapphire) < 150;
+        if (!wasNear && willBeNear) exact *= 1.25;
+        if (wasNear && !willBeNear) exact /= 1.25;
+      }
+      return Math.floor(exact);
+    }
     let base = 50 + 2 * (Number(character.labLevel) || 0);
-    if (Number.isFinite(Number(character.lineWidth))) base = Number(character.lineWidth);
     if (acquiredJewels.has(5) && site && gameDistance(site, sapphire) < 150) base *= 1.25;
-    return Math.max(0, Math.floor((base + flat) * (1 + percent / 100)));
+    return Math.max(0, Math.floor((base + flat) * (1 + (percent + (character.tubeBonus || 0)) / 100)));
   });
 }
 
@@ -238,7 +261,8 @@ async function searchRoute(targets, widths, deadline, onProgress) {
     : accountOrder;
   const optimizingOrder = mode === 'optimal';
   const safety = Math.max(0, Number($('#precision').value) || 0);
-  const beamLimit = optimizingOrder ? 40 : 56;
+  const timeBudgetSeconds = Math.min(120, Math.max(1, Number($('#solve-time').value) || 12));
+  const beamLimit = optimizingOrder ? Math.min(128, 48 + Math.round(timeBudgetSeconds * 4)) : 56;
   const getWidth = (characterId, siteId) => widthsAtSite[siteId][characterId];
   const requiredTotal = targets.filter((target) => target.eligible && target.mode === 'required').length;
   const optionalTotal = targets.filter((target) => target.eligible && target.mode === 'optional').length;
@@ -266,7 +290,7 @@ async function searchRoute(targets, widths, deadline, onProgress) {
         if (performance.now() >= deadline) break;
         const reach = getWidth(charId, siteId) - safety;
         if (reach <= 0) continue;
-        let bestParent = -1, bestGap = Infinity;
+        let bestParent = -1, bestGap = -Infinity;
         for (let parentId = 0; parentId < state.positions.length; parentId++) {
           const parentSiteId = state.positions[parentId];
           const parentReach = getWidth(state.charIds[parentId], parentSiteId) - safety;
@@ -407,7 +431,8 @@ function drawRoute(widths) {
   const players = route.positions.map((point, index) => {
     const character = characters[point.characterId];
     const icon = characterIcons.get(character?.name);
-    return `<g class="player" transform="translate(${point.x},${point.y})"><title>${escapeHtml(character?.name || `Персонаж ${index + 1}`)} · шаг ${index + 1} · линия ${widths[point.characterId]} px · координаты ${point.x}, ${point.y}</title>${icon ? `<image href="${icon}" x="-25" y="-42" width="50" height="50" preserveAspectRatio="xMidYMid meet"/>` : `<circle r="11"/>`}<circle class="player-order" cy="19" r="9"/><text class="player-number" y="22" text-anchor="middle">${index + 1}</text></g>`;
+    const actualWidth = lineWidths(point)[point.characterId];
+    return `<g class="player" transform="translate(${point.x},${point.y})"><title>${escapeHtml(character?.name || `Персонаж ${index + 1}`)} · шаг ${index + 1} · линия ${actualWidth} px · координаты ${point.x}, ${point.y}</title>${icon ? `<image href="${icon}" x="-25" y="-42" width="50" height="50" preserveAspectRatio="xMidYMid meet"/>` : `<circle r="11"/>`}<circle class="player-order" cy="19" r="9"/><text class="player-number" y="22" text-anchor="middle">${index + 1}</text></g>`;
   }).join('');
   const grid = [];
   for (let x = 0; x <= 2100; x += 100) grid.push(`<line class="map-grid" x1="${x}" y1="0" x2="${x}" y2="470"/>`);
@@ -419,7 +444,7 @@ function drawRoute(widths) {
   $('#accuracy').textContent = `${actualMinSlack} px`;
   $('#placement-list').innerHTML = route.positions.map((point, index) => {
     const character = characters[point.characterId];
-    return `<div class="placement-step"><b>${index + 1}</b><span>${characterIcons.get(character?.name) ? `<img src="${characterIcons.get(character.name)}" alt="">` : ''}</span><strong>${escapeHtml(character?.name || `Персонаж ${index + 1}`)}</strong><code>x ${point.x} · y ${point.y}</code><small>ширина линии ${widths[point.characterId]} px</small></div>`;
+    return `<div class="placement-step"><b>${index + 1}</b><span>${characterIcons.get(character?.name) ? `<img src="${characterIcons.get(character.name)}" alt="">` : ''}</span><strong>${escapeHtml(character?.name || `Персонаж ${index + 1}`)}</strong><code>x ${point.x} · y ${point.y}</code><small>ширина линии ${lineWidths(point)[point.characterId]} px</small></div>`;
   }).join('');
   $('#active-nodes').innerHTML = [
     ...layout.bonuses.map((entry) => ({ ...entry, type: 'bonus' })),
@@ -471,7 +496,7 @@ $('#no-targets').addEventListener('click', () => {
   acquiredJewels.forEach((id) => targetModes.set(`j${id}`, 'excluded'));
   calculateRoute();
 });
-document.querySelectorAll('[data-recalc]').forEach((input) => input.addEventListener('input', calculateRoute));
+document.querySelectorAll('[data-recalc]').forEach((input) => input.addEventListener('input', () => { refreshAutoLineWidths(); calculateRoute(); }));
 
 if (!layout) showStatus('Встроенная карта Laboratory не загрузилась. Обновите страницу.', true);
 else { renderCharacters(); renderJewels(); calculateRoute(); }
