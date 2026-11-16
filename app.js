@@ -1,10 +1,11 @@
-const ASSET_ROOT = 'https://raw.githubusercontent.com/Morta1/IdleonToolbox/48cb4ee697988ec5eac14ba97142add6296505b2/public/data';
+const ASSET_ROOT = 'assets/idleon';
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const layout = window.IDLEON_LAB_LAYOUT;
 let characters = [{ name: 'Персонаж 1', labLevel: 0, current: null, lineWidth: 50, imported: false }];
 let acquiredJewels = new Set();
 let importedLineCardBonus = 0;
+let importedNodeRangeFlat = 0;
 let targetModes = new Map((layout?.bonuses || []).map((entry) => [`b${entry.id}`, 'optional']));
 const characterIcons = new Map();
 let solving = false;
@@ -42,7 +43,13 @@ function parseSave(value) {
   const gemShop = getArray(save.GemItemsPurchased);
   const tubeBonusSlots = Math.max(0, Number(gemShop[123]) || 0) * 2;
   const cards = save.Cards0 && typeof save.Cards0 === 'object' ? save.Cards0 : getArray(save.Cards0);
-  const lineCardBonus = Number(cards?.Crystal3) > 0 ? 2 : 0;
+  const lineCardBonus = Math.min(2 * (Number(cards?.Crystal3) || 0), 50);
+  const taskLevels = getArray(save.TaskZZ2);
+  const dream = getArray(save.Dream);
+  const summon = getArray(save.Summon);
+  const winRangeSummons = new Set(['slimeG', 'frogBIG', 'steak', 'ram', 'w5a4', 'w6b4', 'Pet10']);
+  const winRangeCount = getArray(summon[1]).filter((name) => winRangeSummons.has(name)).length;
+  const nodeRangeFlat = Math.max(0, Number(taskLevels[3]?.[4]) || 0) + (Number(dream[8]) || 0) + 3.5 * 0.3 * winRangeCount;
   const coords = getArray(lab[0]);
   const jewelFlags = getArray(lab[14]);
   const found = [];
@@ -66,7 +73,7 @@ function parseSave(value) {
     });
   }
   if (!found.length) throw new Error('Не найдены массивы персонажей Lv0_0, Lv0_1… в этом JSON.');
-  return { characters: found, jewelFlags, lineCardBonus };
+  return { characters: found, jewelFlags, lineCardBonus, nodeRangeFlat };
 }
 
 function importSave(value, source) {
@@ -74,6 +81,7 @@ function importSave(value, source) {
     const parsed = parseSave(value);
     characters = parsed.characters;
     importedLineCardBonus = parsed.lineCardBonus;
+    importedNodeRangeFlat = parsed.nodeRangeFlat;
     acquiredJewels = new Set(parsed.jewelFlags.flatMap((flag, index) => Number(flag) === 1 ? [index] : []));
     targetModes = new Map([...(layout?.bonuses || []).map((entry) => [`b${entry.id}`, 'optional']), ...[...acquiredJewels].map((id) => [`j${id}`, 'optional'])]);
     characterIcons.clear();
@@ -98,6 +106,7 @@ const HEAD_COLORS = {
 };
 function imageLoaded(src) { return new Promise((resolve) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = () => resolve(null); image.src = src; }); }
 async function makeCharacterIcon(character) {
+  try {
   const [head, hats] = await Promise.all([imageLoaded('assets/head.png'), imageLoaded('assets/hats_board.png')]);
   if (!head) return null;
   const canvas = document.createElement('canvas'); canvas.width = canvas.height = 65;
@@ -125,6 +134,28 @@ async function makeCharacterIcon(character) {
     ctx.drawImage(hats, sx, sy, 30, 50, headX - 22, headY - 36, 60, 100);
   }
   return canvas.toDataURL();
+  } catch {
+    // Local file:// pages may refuse pixel reads from canvas. drawRoute has a
+    // direct-SVG fallback that uses these same local sprites without canvas.
+    return null;
+  }
+}
+
+function fallbackCharacterMarkup(character, { slot = 0, placement = false } = {}) {
+  const hue = HEAD_HUES.find(([max]) => character.classId < max)?.[1] ?? 90;
+  const matrix = HEAD_COLORS[hue].join(' ');
+  const filterId = `head-tint-${hue}-${slot}-${placement ? 'map' : 'card'}`;
+  const worn = character.equipment?.[0] || {};
+  const premium = worn[8];
+  const helmet = premium && premium !== 'Blank' && premium !== 'EquipmentHats38' ? premium : worn[0];
+  const hatId = typeof HAT_IDS !== 'undefined' ? HAT_IDS[helmet] : undefined;
+  let hat = '';
+  if (Number.isFinite(hatId)) {
+    const frame = hatId + 2, col = frame % 14, row = Math.floor(frame / 14);
+    hat = `<svg x="0" y="-8" width="60" height="100" viewBox="${col * 30} ${row * 50} 30 50" preserveAspectRatio="none"><image href="assets/hats_board.png" x="0" y="0" width="420" height="650" preserveAspectRatio="none"/></svg>`;
+  }
+  const position = placement ? 'x="-25" y="-42" ' : '';
+  return `<svg class="fallback-character" ${position}width="50" height="50" viewBox="0 0 65 65" preserveAspectRatio="none"><defs><filter id="${filterId}"><feColorMatrix type="matrix" values="${matrix}"/></filter></defs><image href="assets/head.png" x="22" y="28" width="22" height="22" filter="url(#${filterId})"/>${hat}</svg>`;
 }
 
 function renderCharacters() {
@@ -184,6 +215,17 @@ function gameDistance(a, b) {
   return 0.9604339 * Math.max(dx, dy) + 0.397824735 * Math.min(dx, dy);
 }
 
+function gameRangePolygon(center, radius) {
+  const axis = radius / 0.9604339;
+  const diagonal = radius / (0.9604339 + 0.397824735);
+  return [
+    { x: center.x + axis, y: center.y }, { x: center.x + diagonal, y: center.y + diagonal },
+    { x: center.x, y: center.y + axis }, { x: center.x - diagonal, y: center.y + diagonal },
+    { x: center.x - axis, y: center.y }, { x: center.x - diagonal, y: center.y - diagonal },
+    { x: center.x, y: center.y - axis }, { x: center.x + diagonal, y: center.y - diagonal }
+  ];
+}
+
 function lineWidths(site = null) {
   const flat = (Number($('#linePx').value) || 0) + importedLineCardBonus;
   const percent = Number($('#linePct').value) || 0;
@@ -208,7 +250,10 @@ function lineWidths(site = null) {
 function targetRanges(rangeMods) {
   const px = Number($('#rangePx').value) || 0;
   const pct = Number($('#rangePct').value) || 0;
-  const range = (base, fixed = false) => fixed ? base : Math.floor(80 * (1 + (rangeMods.pct + pct) / 100) + rangeMods.px + px);
+  // Node activation uses Lab Dist Bonus/Gem from the game, independently of
+  // character line width. Both are measured with DistanceEqn, but node radii
+  // start at 80 (or 100 for the last three jewels) and include Lab range buffs.
+  const range = (base, fixed = false) => fixed ? base : Math.floor(80 * (1 + (rangeMods.pct + pct) / 100) + rangeMods.px + importedNodeRangeFlat + px);
   const targets = layout.bonuses.map((entry) => ({ ...entry, type: 'bonus', key: `b${entry.id}`, eligible: true,
     mode: targetModes.get(`b${entry.id}`) || 'excluded', reach: range(entry.baseRange || 80, entry.id === 8 || entry.id === 13) }));
   layout.jewels.forEach((entry) => {
@@ -240,19 +285,7 @@ function buildCandidates(targets) {
   // A node's capture boundary uses the game's distance metric. In screen space
   // that boundary is an octagon, not a Euclidean circle, so intersect its
   // actual metric polygons to get useful positions between adjacent nodes.
-  const metricPolygon = (center, distance) => {
-    const vertices = [];
-    const sides = 16;
-    for (let i = 0; i < sides; i++) {
-      const angle = (2 * Math.PI * i) / sides;
-      const dx = Math.cos(angle), dy = Math.sin(angle);
-      const unitDistance = gameDistance({ x: 0, y: 0 }, { x: dx, y: dy });
-      const radius = Math.max(0, distance) / unitDistance;
-      vertices.push({ x: center.x + dx * radius, y: center.y + dy * radius });
-    }
-    return vertices;
-  };
-  const polygons = connectableTargets.map((target) => metricPolygon(target, Math.max(0, target.safeReach - 1)));
+  const polygons = connectableTargets.map((target) => gameRangePolygon(target, Math.max(0, target.safeReach - 1)));
   const segmentIntersection = (a, b, c, d) => {
     const abx = b.x - a.x, aby = b.y - a.y, cdx = d.x - c.x, cdy = d.y - c.y;
     const denominator = abx * cdy - aby * cdx;
@@ -283,7 +316,7 @@ function buildCandidates(targets) {
     for (const rawWidth of new Set(siteWidths)) {
       const reach = Math.floor(rawWidth) - 1;
       if (reach <= 0) continue;
-      const connector = metricPolygon(anchor, reach);
+      const connector = gameRangePolygon(anchor, reach);
       for (let i = 0; i < polygons.length; i++) {
         const target = connectableTargets[i];
         const centerDistance = gameDistance(anchor, target);
@@ -489,6 +522,11 @@ function drawRoute(widths) {
     }
   }
   const actualMinSlack = margins.length ? Math.max(0, Math.floor(Math.min(...margins))) : 0;
+  const rangePolygons = route.targets.filter((target) => target.eligible && target.mode !== 'excluded').map((target) => {
+    const points = [];
+    gameRangePolygon(target, Math.max(0, target.reach - 1)).forEach((point) => points.push(`${Math.round(point.x)},${Math.round(point.y)}`));
+    return `<polygon class="node-range ${target.mode} ${connectedKeys.has(target.key) ? 'active' : ''}" points="${points.join(' ')}"><title>Зона ноды ${escapeHtml(target.name)} · радиус ${target.reach} px</title></polygon>`;
+  }).join('');
   const targetSvg = (entry, type) => {
     const active = connectedKeys.has(`${type === 'bonus' ? 'b' : 'j'}${entry.id}`);
     const locked = type === 'jewel' && !acquiredJewels.has(entry.id);
@@ -497,7 +535,7 @@ function drawRoute(widths) {
       ? `<image class="target-icon" href="${ASSET_ROOT}/LabBonus${entry.id}.png" x="-15" y="-15" width="30" height="30" preserveAspectRatio="xMidYMid meet"/>`
       : `<path d="M0-12 10-4 7 9 0 14-7 9-10-4Z" fill="${locked ? '#445263' : '#77cbe0'}" stroke="${active ? '#d4ff84' : '#c3e6ef'}" stroke-width="2"/>`;
     const opacity = locked ? '.38' : '1';
-    return `<g class="target ${type} ${active ? 'active' : ''}" transform="translate(${entry.x},${entry.y})" opacity="${opacity}"><title>${escapeHtml(entry.name)}${locked ? ' · не открыт' : ''} · ${entry.x}, ${entry.y}</title><circle r="17" fill="${active ? '#c6f36b' : '#233442'}" stroke="${active ? '#efffc9' : '#7e91a4'}" stroke-width="2"/>${icon}<text y="26" text-anchor="middle">${label}</text></g>`;
+    return `<g class="target ${type} ${active ? 'active' : ''}" transform="translate(${entry.x},${entry.y})" opacity="${opacity}"><title>${escapeHtml(entry.name)}${locked ? ' · не открыт' : ''} · ${entry.x}, ${entry.y}</title><rect x="-19" y="-19" width="38" height="38" rx="1" fill="${active ? '#253b2b' : '#172735'}" stroke="${active ? '#c6f36b' : '#8298a8'}" stroke-width="2"/>${icon}<text y="27" text-anchor="middle">${label}</text></g>`;
   };
   const targetMarkup = layout.jewels.map((entry) => targetSvg(entry, 'jewel')).join('') + layout.bonuses.map((entry) => targetSvg(entry, 'bonus')).join('');
   let lines = `<line class="link" x1="${layout.origin.x}" y1="${layout.origin.y}" x2="${route.positions[0]?.x ?? layout.origin.x}" y2="${route.positions[0]?.y ?? layout.origin.y}"/>`;
@@ -510,19 +548,38 @@ function drawRoute(widths) {
     const character = characters[point.characterId];
     const icon = characterIcons.get(character?.name);
     const actualWidth = lineWidths(point)[point.characterId];
-    return `<g class="player" transform="translate(${point.x},${point.y})"><title>${escapeHtml(character?.name || `Персонаж ${index + 1}`)} · шаг ${index + 1} · линия ${actualWidth} px · координаты ${point.x}, ${point.y}</title>${icon ? `<image href="${icon}" x="-25" y="-42" width="50" height="50" preserveAspectRatio="xMidYMid meet"/>` : `<circle r="11"/>`}<circle class="player-order" cy="19" r="9"/><text class="player-number" y="22" text-anchor="middle">${index + 1}</text></g>`;
+    const rosterNumber = point.characterId + 1;
+    return `<g class="player" transform="translate(${point.x},${point.y})"><title>${escapeHtml(character?.name || `Персонаж ${rosterNumber}`)} · слот сохранения ${rosterNumber} · шаг маршрута ${index + 1} · линия ${actualWidth} px · координаты ${point.x}, ${point.y}</title><path class="player-crosshair" d="M-7 0H7M0-7V7"/>${icon ? `<image href="${icon}" x="-25" y="-42" width="50" height="50" preserveAspectRatio="xMidYMid meet"/>` : fallbackCharacterMarkup(character, { slot: point.characterId, placement: true })}<circle class="player-order" cy="19" r="9"/><text class="player-number" y="22" text-anchor="middle">${rosterNumber}</text></g>`;
   }).join('');
   const grid = [];
-  for (let x = 0; x <= 2100; x += 100) grid.push(`<line class="map-grid" x1="${x}" y1="0" x2="${x}" y2="470"/>`);
-  for (let y = 0; y <= 450; y += 50) grid.push(`<line class="map-grid" x1="0" y1="${y}" x2="2110" y2="${y}"/>`);
-  const current = characters.map((character) => character.current ? `<g class="current-player" transform="translate(${character.current.x},${character.current.y})"><title>Сейчас: ${escapeHtml(character.name)} · ${Math.round(character.current.x)}, ${Math.round(character.current.y)}</title>${characterIcons.get(character.name) ? `<image href="${characterIcons.get(character.name)}" x="-18" y="-30" width="36" height="36" preserveAspectRatio="xMidYMid meet"/>` : '<circle r="5"/>'}</g>` : '').join('');
-  svg.innerHTML = `<image class="map-bg" href="${ASSET_ROOT}/LabBG.png" x="0" y="0" width="2110" height="470" preserveAspectRatio="none"/><g>${grid.join('')}</g><text class="origin-label" x="${layout.origin.x + 14}" y="${layout.origin.y + 28}">Prism · 43, 229</text>${lines}${current}${targetMarkup}${players}`;
+  const axes = [];
+  for (let x = 0; x <= 2100; x += 100) { grid.push(`<line class="map-grid" x1="${x}" y1="0" x2="${x}" y2="470"/>`); axes.push(`<text class="axis-label" x="${x + 3}" y="94">${x}</text>`); }
+  for (let y = 0; y <= 450; y += 50) { grid.push(`<line class="map-grid" x1="0" y1="${y}" x2="2110" y2="${y}"/>`); if (y % 100 === 0) axes.push(`<text class="axis-label" x="4" y="${y - 3}">${y}</text>`); }
+  const current = characters.map((character, index) => character.current ? `<g class="current-player" transform="translate(${character.current.x},${character.current.y})"><title>Сейчас · слот сохранения ${index + 1}: ${escapeHtml(character.name)} · ${Math.round(character.current.x)}, ${Math.round(character.current.y)}</title>${characterIcons.get(character.name) ? `<image href="${characterIcons.get(character.name)}" x="-18" y="-30" width="36" height="36" preserveAspectRatio="xMidYMid meet"/>` : fallbackCharacterMarkup(character, { slot: index, placement: true })}</g>` : '').join('');
+  svg.innerHTML = `<image class="map-bg" href="${ASSET_ROOT}/LabBG.png" x="0" y="0" width="2110" height="470" preserveAspectRatio="none"/><g>${grid.join('')}${axes.join('')}</g>${rangePolygons}<text class="origin-label" x="${layout.origin.x + 14}" y="${layout.origin.y + 28}">Prism · 43, 229</text>${lines}${current}${targetMarkup}${players}`;
+  $('#map-coordinate').textContent = 'Координаты карты: наведите курсор для X/Y';
+  if (!svg.dataset.coordinateListener) {
+    svg.addEventListener('pointermove', (event) => {
+      const point = svg.createSVGPoint(); point.x = event.clientX; point.y = event.clientY;
+      const mapPoint = point.matrixTransform(svg.getScreenCTM().inverse());
+      $('#map-coordinate').textContent = `Координаты карты: X ${Math.round(mapPoint.x)} · Y ${Math.round(mapPoint.y)}`;
+    });
+    svg.addEventListener('pointerleave', () => { $('#map-coordinate').textContent = 'Координаты карты: наведите курсор для X/Y'; });
+    svg.dataset.coordinateListener = 'true';
+  }
   $('#lit-count').textContent = `${route.requiredConnected.length}/${route.requiredTotal} обяз. · ${route.optionalConnected.length}/${route.optionalTotal} желат.`;
   $('#player-count').textContent = String(route.positions.length);
   $('#accuracy').textContent = `${actualMinSlack} px`;
   $('#placement-list').innerHTML = route.positions.map((point, index) => {
     const character = characters[point.characterId];
-    return `<div class="placement-step"><b>${index + 1}</b><span>${characterIcons.get(character?.name) ? `<img src="${characterIcons.get(character.name)}" alt="">` : ''}</span><strong>${escapeHtml(character?.name || `Персонаж ${index + 1}`)}</strong><code>x ${point.x} · y ${point.y}</code><small>ширина линии ${lineWidths(point)[point.characterId]} px</small></div>`;
+    const rosterNumber = point.characterId + 1;
+    const nearest = route.targets.reduce((best, target) => gameDistance(point, target) < gameDistance(point, best) ? target : best, route.targets[0]);
+    const dx = Math.round(point.x - nearest.x), dy = Math.round(point.y - nearest.y);
+    const relative = `${nearest.type === 'bonus' ? 'B' : 'J'}${String(nearest.id).padStart(2, '0')}: ${dx >= 0 ? '+' : ''}${dx}, ${dy >= 0 ? '+' : ''}${dy} px`;
+    const avatar = characterIcons.get(character?.name)
+      ? `<img src="${characterIcons.get(character.name)}" alt="">`
+      : fallbackCharacterMarkup(character, { slot: point.characterId });
+    return `<div class="placement-step"><b title="Номер в сохранении">${rosterNumber}</b><span class="roster-avatar">${avatar}</span><strong>${escapeHtml(character?.name || `Персонаж ${rosterNumber}`)}</strong><code>x ${point.x} · y ${point.y}</code><small>шаг ${index + 1} маршрута · от ${relative} · линия ${lineWidths(point)[point.characterId]} px</small></div>`;
   }).join('');
   $('#active-nodes').innerHTML = [
     ...layout.bonuses.map((entry) => ({ ...entry, type: 'bonus' })),
