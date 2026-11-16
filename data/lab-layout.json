@@ -1,0 +1,372 @@
+{
+  "source": "https://github.com/Morta1/IdleonToolbox (data/website-data/shared-data.json and parsers/world-4/lab.ts)",
+  "coordinateSystem": "W4 Laboratory mainframe canvas coordinates (px)",
+  "origin": {
+    "x": 43,
+    "y": 229
+  },
+  "bonuses": [
+    {
+      "id": 0,
+      "name": "Animal Farm",
+      "x": 91,
+      "y": 353,
+      "baseRange": 80,
+      "description": "+1% Total Damage for every different species you have bred within Mob Breeding. You just need to breed the Mob type one time for it to count! @ - @ Total Bonus: {%"
+    },
+    {
+      "id": 1,
+      "name": "Wired In",
+      "x": 250,
+      "y": 310,
+      "baseRange": 80,
+      "description": "All Uploaded Players print 2x more resources from their section of the 3D Printer. The displayed amount will NOT appear doubled, just to avoid confusion as to what your actual base Sampling Rate is, but it will be displayed in blue."
+    },
+    {
+      "id": 2,
+      "name": "Gilded Cyclical Tubing",
+      "x": 356,
+      "y": 147,
+      "baseRange": 80,
+      "description": "All refinery cycles occur 3x faster. Faster cycles means more salts!"
+    },
+    {
+      "id": 3,
+      "name": "No Bubble Left Behind",
+      "x": 450,
+      "y": 220,
+      "baseRange": 80,
+      "description": "Every 24 hours, your 3 lowest level Alchemy Bubbles gets +1 Lv. This only applies to bubbles Lv 5 or higher, so it's more like 'your lowest level bubble that is at least level 5'. ALSO, it only works on the first 15 bubbles of each colour! @ Doesn't trigger on days that you don't login."
+    },
+    {
+      "id": 4,
+      "name": "Killer's Brightside",
+      "x": 538,
+      "y": 362,
+      "baseRange": 80,
+      "description": "All monster kills count for 2x more than normal for things like opening portals and Death Note. Doesn't increase resource drops or exp gain."
+    },
+    {
+      "id": 5,
+      "name": "Shrine World Tour",
+      "x": 651,
+      "y": 200,
+      "baseRange": 80,
+      "description": "If a shrine is placed within town, instead of in a monster map, it will act as though it is placed in EVERY map in that entire world!"
+    },
+    {
+      "id": 6,
+      "name": "Viaduct of the Gods",
+      "x": 753,
+      "y": 113,
+      "baseRange": 80,
+      "description": "All alchemy liquids have x5 higher max capacity. However, you regenerate alchemy liquids -30% slower."
+    },
+    {
+      "id": 7,
+      "name": "Certified Stamp Book",
+      "x": 824,
+      "y": 377,
+      "baseRange": 80,
+      "description": "All Stamps, except for MISC tab stamps, give DOUBLE the bonus."
+    },
+    {
+      "id": 8,
+      "name": "Spelunker Obol",
+      "x": 945,
+      "y": 326,
+      "baseRange": 80,
+      "description": "1.50x higher effects from all active Jewels within the Mainframe, and gives you +50% rememberance of the game Idle Skilling. @ This bonus always has a 80px connection range no matter what!"
+    },
+    {
+      "id": 9,
+      "name": "Fungi Finger Pocketer",
+      "x": 990,
+      "y": 148,
+      "baseRange": 80,
+      "description": "+2% extra cash from monsters for every 1 million Green Mushroom kills your account has, which can be viewed at Death Note. @ - @ Total Bonus: {%"
+    },
+    {
+      "id": 10,
+      "name": "My 1st Chemistry Set",
+      "x": 1177,
+      "y": 163,
+      "baseRange": 80,
+      "description": "All Vials in Alchemy give DOUBLE the bonus. The bonus description will reflect this doubling."
+    },
+    {
+      "id": 11,
+      "name": "Unadulterated Banking Fury",
+      "x": 1300,
+      "y": 380,
+      "baseRange": 80,
+      "description": "+2% Total Damage for each 'green stack' of resources in your bank. A 'green stack' is a stack in your Storage Chest with 10 million or more items, since the number turns Green after 10M! @ - @ Total Bonus: {%"
+    },
+    {
+      "id": 12,
+      "name": "Sigils of Olden Alchemy",
+      "x": 400,
+      "y": 390,
+      "baseRange": 80,
+      "description": "Allows you to level up Alchemy Sigils by assigning players in alchemy, at a base rate of 1 sigil xp per hour. @ Sigils can be leveled up just twice: Once to unlock their bonus, and once more to boost their bonus. Their bonuses are passive, and apply to all characters always."
+    },
+    {
+      "id": 13,
+      "name": "Viral Connection",
+      "x": 1430,
+      "y": 265,
+      "baseRange": 80,
+      "description": "All mainframe bonuses and jewels have a 50% larger connection range, unless it states otherwise. @ This bonus always has a 80px connection range no matter what!"
+    },
+    {
+      "id": 14,
+      "name": "Artifact Attraction",
+      "x": 1530,
+      "y": 105,
+      "baseRange": 80,
+      "description": "Artifact find chance is 1.5x higher! If you've found all artifacts at max rarity, then this bonus changes to 1,000x artifact find chance!"
+    },
+    {
+      "id": 15,
+      "name": "Slab Sovereignty",
+      "x": 1630,
+      "y": 365,
+      "baseRange": 80,
+      "description": "All bonuses given by the Slab are 1.25x higher!"
+    },
+    {
+      "id": 16,
+      "name": "Spiritual Growth",
+      "x": 1790,
+      "y": 250,
+      "baseRange": 80,
+      "description": "Boosts EXP multi for all three World 6 skills by +50%!"
+    },
+    {
+      "id": 17,
+      "name": "Depot Studies PhD",
+      "x": 1950,
+      "y": 195,
+      "baseRange": 80,
+      "description": "All bonuses given at the Crop Depot are 1.30x higher!"
+    }
+  ],
+  "jewels": [
+    {
+      "id": 0,
+      "name": "Amethyst Rhinestone",
+      "x": 76,
+      "y": 134,
+      "baseRange": 80,
+      "bonus": 1.5,
+      "description": "Meal cooking is }x faster. This bonus is applied TWICE if all 3 purple jewels are active."
+    },
+    {
+      "id": 1,
+      "name": "Purple Navette",
+      "x": 164,
+      "y": 412,
+      "baseRange": 80,
+      "bonus": 0.5,
+      "description": "'Animal Farm' mainframe bonus gives an additional +}% per species. If Animal Farm is not active, then this does nothing."
+    },
+    {
+      "id": 2,
+      "name": "Purple Rhombol",
+      "x": 163,
+      "y": 218,
+      "baseRange": 80,
+      "bonus": 40,
+      "description": "All players get +}% Lab EXP gain."
+    },
+    {
+      "id": 3,
+      "name": "Sapphire Rhinestone",
+      "x": 246,
+      "y": 110,
+      "baseRange": 80,
+      "bonus": 3,
+      "description": "Construction slot 1 is now trimmed up, and has }x building Speed. Also trims slot 2 if all 4 blue jewels are active."
+    },
+    {
+      "id": 4,
+      "name": "Sapphire Navette",
+      "x": 277,
+      "y": 394,
+      "baseRange": 80,
+      "bonus": 3,
+      "description": "All players get +}% All Stat. STR, AGI, WIS, and LUCK to boot."
+    },
+    {
+      "id": 5,
+      "name": "Sapphire Rhombol",
+      "x": 470,
+      "y": 294,
+      "baseRange": 80,
+      "bonus": 25,
+      "description": "Even if this jewel is off, all players within a 150px radius of this jewel, shown by the circle, have +25% Line Width. @ Also gives +}% Breeding EXP, but only when active."
+    },
+    {
+      "id": 6,
+      "name": "Sapphire Pyramite",
+      "x": 490,
+      "y": 112,
+      "baseRange": 80,
+      "bonus": 2,
+      "description": "Every 24 hours, the } lowest level Kitchen Upgrades across all owned kitchens gain +1 Lv."
+    },
+    {
+      "id": 7,
+      "name": "Pyrite Rhinestone",
+      "x": 552,
+      "y": 163,
+      "baseRange": 80,
+      "bonus": 2,
+      "description": "'No Bubble Left Behind' mainframe bonus gives +} levels instead of +1, and does so for the lowest 4 bubbles instead of 3."
+    },
+    {
+      "id": 8,
+      "name": "Pyrite Navette",
+      "x": 646,
+      "y": 407,
+      "baseRange": 80,
+      "bonus": 3,
+      "description": "All players get }x 'non-consume' chance, and raises the max chance from 90% to 98%, allowing for longer AFK with food."
+    },
+    {
+      "id": 9,
+      "name": "Pyrite Rhombol",
+      "x": 680,
+      "y": 319,
+      "baseRange": 80,
+      "bonus": 30,
+      "description": "All mainframe bonuses and jewels have a }% larger connection range, except for this jewel. This jewel has an 80px connection range no matter what!"
+    },
+    {
+      "id": 10,
+      "name": "Pyrite Pyramite",
+      "x": 847,
+      "y": 105,
+      "baseRange": 80,
+      "bonus": 10,
+      "description": "All players deal 1.}x more damage. This bonus is applied TWICE if all 4 Orange Jewels are active."
+    },
+    {
+      "id": 11,
+      "name": "Emerald Rhinestone",
+      "x": 998,
+      "y": 404,
+      "baseRange": 80,
+      "bonus": 28,
+      "description": "}% reduced incubation egg time. Mo eggs mo problems tho, fo sho."
+    },
+    {
+      "id": 12,
+      "name": "Emerald Navette",
+      "x": 1079,
+      "y": 233,
+      "baseRange": 80,
+      "bonus": 200,
+      "description": "All players have } higher base efficiency in all skills, and +10% skill action speed. This bonus is applied TWICE if all 5 Green Jewels are active."
+    },
+    {
+      "id": 13,
+      "name": "Emerald Rhombol",
+      "x": 1085,
+      "y": 121,
+      "baseRange": 80,
+      "bonus": 1,
+      "description": "'Fungi Finger Pocketer' mainframe bonus gives an additional +}% cash bonus per million mushroom kills"
+    },
+    {
+      "id": 14,
+      "name": "Emerald Pyramite",
+      "x": 1167,
+      "y": 390,
+      "baseRange": 80,
+      "bonus": 1,
+      "description": "Meal cooking is }% faster for every 25 total upgrade levels across all kitchens. @ Total Bonus: {% speed"
+    },
+    {
+      "id": 15,
+      "name": "Emerald Ulthurite",
+      "x": 1300,
+      "y": 208,
+      "baseRange": 80,
+      "bonus": 30,
+      "description": "Shiny Mobs in the Fenceyard level up their Passive Bonuses +}% faster"
+    },
+    {
+      "id": 16,
+      "name": "Black Diamond Rhinestone",
+      "x": 1365,
+      "y": 100,
+      "baseRange": 80,
+      "bonus": 16,
+      "description": "All meals now give a 1.}x higher bonus! Go ahead and check it out at the Dinner Menu! @ Doesn't apply to the meal that gives Line Width bonus."
+    },
+    {
+      "id": 17,
+      "name": "Black Diamond Ulthurite",
+      "x": 1389,
+      "y": 408,
+      "baseRange": 80,
+      "bonus": 1,
+      "description": "'Unadulterated Banking Fury' gives an additional +}% Total Damage per greened stack."
+    },
+    {
+      "id": 18,
+      "name": "Pure Opal Rhinestone",
+      "x": 1619,
+      "y": 203,
+      "baseRange": 80,
+      "bonus": 20,
+      "description": "'Slab Sovereignty' gives an additional }% boost to all Slab Bonuses!"
+    },
+    {
+      "id": 19,
+      "name": "Pure Opal Navette",
+      "x": 1846,
+      "y": 410,
+      "baseRange": 80,
+      "bonus": 10,
+      "description": "+}% higher effects from all active bonuses and jewels within the Mainframe, except for Spelunker Obol. @ This is a multiplier, so +10% would be 1.10x, ya feel me? @ This bonus always has a 80px connection range no matter what!"
+    },
+    {
+      "id": 20,
+      "name": "Pure Opal Rhombol",
+      "x": 2040,
+      "y": 96,
+      "baseRange": 80,
+      "bonus": 10,
+      "description": "'Depot Studies PhD' gives an additional }% boost to all Crop Depot bonuses!"
+    },
+    {
+      "id": 21,
+      "name": "Deadly Wrath Jewel",
+      "x": 1815,
+      "y": 96,
+      "baseRange": 100,
+      "bonus": 50,
+      "description": "+}% extra Deathbringer Bones. @ This bonus always has a 100px connection range no matter what!"
+    },
+    {
+      "id": 22,
+      "name": "North Winds Jewel",
+      "x": 1728,
+      "y": 421,
+      "baseRange": 100,
+      "bonus": 50,
+      "description": "+}% extra Windwalker Dust. @ This bonus always has a 100px connection range no matter what!"
+    },
+    {
+      "id": 23,
+      "name": "Eternal Energy Jewel",
+      "x": 2042,
+      "y": 410,
+      "baseRange": 100,
+      "bonus": 50,
+      "description": "+}% extra Arcane Cultist Tachyons. @ This bonus always has a 100px connection range no matter what!"
+    }
+  ]
+}
