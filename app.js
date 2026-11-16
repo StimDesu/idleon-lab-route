@@ -232,9 +232,10 @@ async function searchRoute(targets, widths, deadline, onProgress) {
   }, { active: 0n, required: 0n, optional: 0n, excluded: 0n }));
   const widthsAtSite = sites.map((site) => lineWidths(site));
   const mode = $('#order').value;
-  const ordered = mode === 'wide'
-    ? widths.map((width, index) => ({ width, index })).sort((a, b) => b.width - a.width).map((entry) => entry.index)
-    : widths.map((_, index) => index);
+  const accountOrder = widths.map((_, index) => index);
+  const ordered = mode === 'wide' && accountOrder.length > 1
+    ? [accountOrder[0], ...accountOrder.slice(1).sort((a, b) => widths[b] - widths[a])]
+    : accountOrder;
   const optimizingOrder = mode === 'optimal';
   const safety = Math.max(0, Number($('#precision').value) || 0);
   const beamLimit = optimizingOrder ? 40 : 56;
@@ -243,33 +244,41 @@ async function searchRoute(targets, widths, deadline, onProgress) {
   const optionalTotal = targets.filter((target) => target.eligible && target.mode === 'optional').length;
   const compare = (a, b) => countBits(b.requiredMask) - countBits(a.requiredMask) || countBits(a.excludedMask) - countBits(b.excludedMask) || countBits(b.optionalMask) - countBits(a.optionalMask) || countBits(b.activeMask) - countBits(a.activeMask) || b.margin - a.margin;
   let beam = [], best = { positions: [], charIds: [], activeMask: 0n, requiredMask: 0n, optionalMask: 0n, excludedMask: 0n, margin: 0 };
-  const firstCandidates = optimizingOrder ? widths.map((_, index) => index) : [ordered[0]];
+  const playerIds = accountOrder;
+  // In game the first account character who reaches the Prism seeds the chain.
+  // Keep the first roster member as the root so the suggested tree is reproducible.
+  const firstCandidates = playerIds.length ? [playerIds[0]] : [];
   for (const charId of firstCandidates) for (let siteId = 0; siteId < sites.length; siteId++) {
     const reach = getWidth(charId, siteId) - safety;
     const distance = gameDistance(layout.origin, sites[siteId]);
-    if (reach > 0 && distance < reach) beam.push({ positions: [siteId], charIds: [charId], usedMask: 1n << BigInt(charId), activeMask: coverage[siteId].active,
+    if (reach > 0 && distance < reach) beam.push({ positions: [siteId], charIds: [charId], parentIds: [-1], usedMask: 1n << BigInt(charId), activeMask: coverage[siteId].active,
       requiredMask: coverage[siteId].required, optionalMask: coverage[siteId].optional, excludedMask: coverage[siteId].excluded, margin: reach - distance });
   }
   beam.sort(compare); beam = beam.slice(0, beamLimit);
   if (beam[0] && compare(beam[0], best) < 0) best = beam[0];
   onProgress(5, `Подготовлено ${sites.length} точек-кандидатов · ищем порядок персонажей`);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  for (let step = 1; step < widths.length && beam.length && performance.now() < deadline; step++) {
+  for (let step = 1; step < playerIds.length && beam.length && performance.now() < deadline; step++) {
     const next = [];
     for (const state of beam) {
-      const nextChars = optimizingOrder ? widths.map((_, index) => index).filter((index) => !(state.usedMask & (1n << BigInt(index)))) : [ordered[step]];
+      const nextChars = optimizingOrder ? playerIds.filter((index) => !(state.usedMask & (1n << BigInt(index)))) : [ordered[step]];
       for (const charId of nextChars) for (let siteId = 0; siteId < sites.length; siteId++) {
         if (performance.now() >= deadline) break;
         const reach = getWidth(charId, siteId) - safety;
         if (reach <= 0) continue;
-        let closest = Infinity;
-        for (const previousId of state.positions) closest = Math.min(closest, gameDistance(sites[previousId], sites[siteId]));
-        if (closest >= reach) continue;
+        let bestParent = -1, bestGap = Infinity;
+        for (let parentId = 0; parentId < state.positions.length; parentId++) {
+          const parentSiteId = state.positions[parentId];
+          const parentReach = getWidth(state.charIds[parentId], parentSiteId) - safety;
+          const gap = gameDistance(sites[parentSiteId], sites[siteId]);
+          if (parentReach > gap && parentReach - gap > bestGap) { bestParent = parentId; bestGap = parentReach - gap; }
+        }
+        if (bestParent < 0) continue;
         const usedMask = state.usedMask | (1n << BigInt(charId));
-        next.push({ positions: [...state.positions, siteId], charIds: [...state.charIds, charId], usedMask,
+        next.push({ positions: [...state.positions, siteId], charIds: [...state.charIds, charId], parentIds: [...state.parentIds, bestParent], usedMask,
           activeMask: state.activeMask | coverage[siteId].active, requiredMask: state.requiredMask | coverage[siteId].required,
           optionalMask: state.optionalMask | coverage[siteId].optional, excludedMask: state.excludedMask | coverage[siteId].excluded,
-          margin: state.margin + reach - closest });
+          margin: state.margin + bestGap });
       }
     }
     next.sort(compare);
@@ -282,13 +291,41 @@ async function searchRoute(targets, widths, deadline, onProgress) {
     }
     beam = diverse;
     if (beam[0] && compare(beam[0], best) < 0) best = beam[0];
-    onProgress(Math.min(96, Math.round((step / Math.max(1, widths.length - 1)) * 96)), `Проверено ${step + 1} из ${widths.length} персонажей · ${sites.length} точек-кандидатов`);
+    onProgress(Math.min(96, Math.round((step / Math.max(1, playerIds.length - 1)) * 96)), `Проверено ${step + 1} из ${playerIds.length} персонажей · ${sites.length} точек-кандидатов`);
     await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  // Complete any search cut short by the time limit with a fast greedy pass.
+  // This always places every available character and lets late characters add
+  // targets instead of merely stacking them at the anchor.
+  const placed = new Set(best.charIds);
+  while (placed.size < playerIds.length && best.positions.length) {
+    let choice = null;
+    for (const charId of playerIds) {
+      if (placed.has(charId)) continue;
+      for (let siteId = 0; siteId < sites.length; siteId++) {
+        let parentId = -1, parentSlack = -Infinity;
+        for (let index = 0; index < best.positions.length; index++) {
+          const parentSiteId = best.positions[index];
+          const slack = getWidth(best.charIds[index], parentSiteId) - safety - gameDistance(sites[parentSiteId], sites[siteId]);
+          if (slack > parentSlack) { parentId = index; parentSlack = slack; }
+        }
+        if (parentSlack < 0) continue;
+        const candidate = {
+          positions: [...best.positions, siteId], charIds: [...best.charIds, charId], parentIds: [...best.parentIds, parentId],
+          usedMask: best.usedMask | (1n << BigInt(charId)), activeMask: best.activeMask | coverage[siteId].active,
+          requiredMask: best.requiredMask | coverage[siteId].required, optionalMask: best.optionalMask | coverage[siteId].optional,
+          excludedMask: best.excludedMask | coverage[siteId].excluded, margin: best.margin + parentSlack
+        };
+        if (!choice || compare(candidate, choice) < 0) choice = candidate;
+      }
+    }
+    if (!choice) break;
+    best = choice; placed.add(best.charIds.at(-1));
   }
   const connected = targets.filter((target, index) => target.eligible && Boolean(best.activeMask & (1n << BigInt(index))));
   const requiredConnected = targets.filter((target, index) => target.eligible && target.mode === 'required' && Boolean(best.requiredMask & (1n << BigInt(index))));
   const optionalConnected = targets.filter((target, index) => target.eligible && target.mode === 'optional' && Boolean(best.optionalMask & (1n << BigInt(index))));
-  return { positions: best.positions.map((siteId, index) => ({ ...sites[siteId], characterId: best.charIds[index] })), targets, connected,
+  return { positions: best.positions.map((siteId, index) => ({ ...sites[siteId], characterId: best.charIds[index], parentId: best.parentIds[index] })), targets, connected,
     requiredTotal, optionalTotal, requiredConnected, optionalConnected, excludedConnected: countBits(best.excludedMask), complete: requiredConnected.length === requiredTotal };
 }
 
@@ -309,7 +346,11 @@ async function calculateRoute() {
     let modifiers = { pct: 0, px: 0 }, result;
     for (let iteration = 0; iteration < 8 && performance.now() < deadline; iteration++) {
       const targets = targetRanges(modifiers);
-      result = await searchRoute(targets, widths, deadline, (value, message) => { $('#progress').value = value; $('#progress-message').textContent = message; });
+      result = await searchRoute(targets, widths, deadline, (_value, message) => {
+        const elapsed = (performance.now() - started) / 1000;
+        $('#progress').value = Math.min(95, Math.round((elapsed / timeLimit) * 95));
+        $('#progress-message').textContent = `${message} · ${elapsed.toFixed(1)} / ${timeLimit.toFixed(0)} с`;
+      });
       const hasViral = result.connected.some((target) => target.type === 'bonus' && target.id === 13);
       const hasPyrite = result.connected.some((target) => target.type === 'jewel' && target.id === 9);
       const hasSpelunker = result.connected.some((target) => target.type === 'bonus' && target.id === 8);
@@ -339,11 +380,11 @@ function drawRoute(widths) {
   let margins = route.connected.map((target) => target.reach - distToRoute(target));
   for (let i = 0; i < route.positions.length; i++) {
     const point = route.positions[i];
-    const reach = lineWidths(point)[point.characterId];
-    let dist = Infinity;
-    if (i === 0) dist = gameDistance(layout.origin, point);
-    else for (let j = 0; j < i; j++) dist = Math.min(dist, gameDistance(point, route.positions[j]));
-    margins.push(reach - dist);
+    if (i === 0) margins.push(lineWidths(point)[point.characterId] - gameDistance(layout.origin, point));
+    else {
+      const parent = route.positions[point.parentId] || route.positions[0];
+      margins.push(lineWidths(parent)[parent.characterId] - gameDistance(parent, point));
+    }
   }
   const actualMinSlack = margins.length ? Math.max(0, Math.floor(Math.min(...margins))) : 0;
   const targetSvg = (entry, type) => {
@@ -360,8 +401,7 @@ function drawRoute(widths) {
   let lines = `<line class="link" x1="${layout.origin.x}" y1="${layout.origin.y}" x2="${route.positions[0]?.x ?? layout.origin.x}" y2="${route.positions[0]?.y ?? layout.origin.y}"/>`;
   for (let i = 1; i < route.positions.length; i++) {
     const point = route.positions[i];
-    let parent = route.positions[0], closest = Infinity;
-    for (let j = 0; j < i; j++) { const distance = gameDistance(point, route.positions[j]); if (distance < closest) { closest = distance; parent = route.positions[j]; } }
+    const parent = route.positions[point.parentId] || route.positions[0];
     lines += `<line class="link" x1="${parent.x}" y1="${parent.y}" x2="${point.x}" y2="${point.y}"/>`;
   }
   const players = route.positions.map((point, index) => {
@@ -421,6 +461,16 @@ $('#tab-name').addEventListener('click', () => { $('#tab-name').classList.add('s
 $('#add-character').addEventListener('click', () => { characters.push({ name: `Персонаж ${characters.length + 1}`, labLevel: 0, current: null, lineWidth: 50, imported: false }); renderCharacters(); calculateRoute(); });
 $('#solve').addEventListener('click', calculateRoute);
 $('#order').addEventListener('change', calculateRoute);
+$('#all-optional').addEventListener('click', () => {
+  layout.bonuses.forEach((entry) => targetModes.set(`b${entry.id}`, 'optional'));
+  acquiredJewels.forEach((id) => targetModes.set(`j${id}`, 'optional'));
+  calculateRoute();
+});
+$('#no-targets').addEventListener('click', () => {
+  layout.bonuses.forEach((entry) => targetModes.set(`b${entry.id}`, 'excluded'));
+  acquiredJewels.forEach((id) => targetModes.set(`j${id}`, 'excluded'));
+  calculateRoute();
+});
 document.querySelectorAll('[data-recalc]').forEach((input) => input.addEventListener('input', calculateRoute));
 
 if (!layout) showStatus('Встроенная карта Laboratory не загрузилась. Обновите страницу.', true);
