@@ -208,7 +208,6 @@ function lineWidths(site = null) {
 function targetRanges(rangeMods) {
   const px = Number($('#rangePx').value) || 0;
   const pct = Number($('#rangePct').value) || 0;
-  const safety = Math.max(0, Number($('#precision').value) || 0);
   const range = (base, fixed = false) => fixed ? base : Math.floor(80 * (1 + (rangeMods.pct + pct) / 100) + rangeMods.px + px);
   const targets = layout.bonuses.map((entry) => ({ ...entry, type: 'bonus', key: `b${entry.id}`, eligible: true,
     mode: targetModes.get(`b${entry.id}`) || 'excluded', reach: range(entry.baseRange || 80, entry.id === 8 || entry.id === 13) }));
@@ -218,7 +217,7 @@ function targetRanges(rangeMods) {
     targets.push({ ...entry, type: 'jewel', key: `j${entry.id}`, eligible: acquiredJewels.has(entry.id),
       mode: targetModes.get(`j${entry.id}`) || 'excluded', reach: range(base, fixed) });
   });
-  targets.forEach((target) => { target.safeReach = Math.max(0, target.reach - safety); });
+  targets.forEach((target) => { target.safeReach = target.reach; });
   return targets;
 }
 
@@ -279,11 +278,10 @@ function buildCandidates(targets) {
   // be reachable from the Prism even when its center is just outside line
   // range, but the candidate set would incorrectly contain no valid first step.
   const anchors = [...candidates.values()];
-  const safety = Math.max(0, Number($('#precision').value) || 0);
   for (const anchor of anchors) {
     const siteWidths = lineWidths(anchor);
     for (const rawWidth of new Set(siteWidths)) {
-      const reach = Math.floor(rawWidth) - safety - 1;
+      const reach = Math.floor(rawWidth) - 1;
       if (reach <= 0) continue;
       const connector = metricPolygon(anchor, reach);
       for (let i = 0; i < polygons.length; i++) {
@@ -318,12 +316,11 @@ async function searchRoute(targets, widths, deadline, onProgress) {
     ? [accountOrder[0], ...accountOrder.slice(1).sort((a, b) => widths[b] - widths[a])]
     : accountOrder;
   const optimizingOrder = mode === 'optimal';
-  const safety = Math.max(0, Number($('#precision').value) || 0);
   const timeBudgetSeconds = Math.min(120, Math.max(1, Number($('#solve-time').value) || 12));
   const beamLimit = optimizingOrder ? Math.min(128, 48 + Math.round(timeBudgetSeconds * 4)) : 56;
   const getWidth = (characterId, siteId) => widthsAtSite[siteId][characterId];
   const futureMasks = sites.map((site, siteId) => widths.map((_, charId) => {
-    const reach = getWidth(charId, siteId) - safety;
+    const reach = getWidth(charId, siteId);
     return targets.reduce((mask, target, index) => {
       if (!target.eligible || target.mode === 'excluded' || gameDistance(site, target) >= reach + target.safeReach) return mask;
       return mask | (1n << BigInt(index));
@@ -340,7 +337,7 @@ async function searchRoute(targets, widths, deadline, onProgress) {
   // can discard the widest line (often Bubo) and sharply limit the whole route.
   const firstCandidates = optimizingOrder ? playerIds : (playerIds.length ? [playerIds[0]] : []);
   for (const charId of firstCandidates) for (let siteId = 0; siteId < sites.length; siteId++) {
-    const reach = getWidth(charId, siteId) - safety;
+    const reach = getWidth(charId, siteId);
     const distance = gameDistance(layout.origin, sites[siteId]);
     if (reach > 0 && distance < reach) beam.push({ positions: [siteId], charIds: [charId], parentIds: [-1], usedMask: 1n << BigInt(charId), activeMask: coverage[siteId].active,
       futureMask: futureMasks[siteId][charId], requiredMask: coverage[siteId].required, optionalMask: coverage[siteId].optional, excludedMask: coverage[siteId].excluded, margin: reach - distance });
@@ -355,7 +352,7 @@ async function searchRoute(targets, widths, deadline, onProgress) {
       const nextChars = optimizingOrder ? playerIds.filter((index) => !(state.usedMask & (1n << BigInt(index)))) : [ordered[step]];
       for (const charId of nextChars) for (let siteId = 0; siteId < sites.length; siteId++) {
         if (performance.now() >= deadline) break;
-        const reach = getWidth(charId, siteId) - safety;
+        const reach = getWidth(charId, siteId);
         if (reach <= 0) continue;
         const rootCharacterId = state.charIds[0];
         if (optimizingOrder && charId < rootCharacterId && gameDistance(layout.origin, sites[siteId]) < getWidth(charId, siteId)) continue;
@@ -367,7 +364,7 @@ async function searchRoute(targets, widths, deadline, onProgress) {
         let bestParent = -1, bestGap = -Infinity;
         for (let parentId = 0; parentId < state.positions.length; parentId++) {
           const parentSiteId = state.positions[parentId];
-          const parentReach = getWidth(state.charIds[parentId], parentSiteId) - safety;
+          const parentReach = getWidth(state.charIds[parentId], parentSiteId);
           const gap = gameDistance(sites[parentSiteId], sites[siteId]);
           if (parentReach > gap && parentReach - gap > bestGap) { bestParent = parentId; bestGap = parentReach - gap; }
         }
@@ -411,7 +408,7 @@ async function searchRoute(targets, widths, deadline, onProgress) {
         let parentId = -1, parentSlack = -Infinity;
         for (let index = 0; index < best.positions.length; index++) {
           const parentSiteId = best.positions[index];
-          const slack = getWidth(best.charIds[index], parentSiteId) - safety - gameDistance(sites[parentSiteId], sites[siteId]);
+          const slack = getWidth(best.charIds[index], parentSiteId) - gameDistance(sites[parentSiteId], sites[siteId]);
           if (slack > parentSlack) { parentId = index; parentSlack = slack; }
         }
         if (parentSlack < 0) continue;
@@ -481,7 +478,6 @@ function drawRoute(widths) {
   const svg = $('#map');
   if (!route) return;
   const connectedKeys = new Set(route.connected.map((target) => target.key));
-  const precision = Math.max(0, Number($('#precision').value) || 0);
   const distToRoute = (target) => route.positions.reduce((best, point) => Math.min(best, gameDistance(point, target)), Infinity);
   let margins = route.connected.map((target) => target.reach - distToRoute(target));
   for (let i = 0; i < route.positions.length; i++) {
