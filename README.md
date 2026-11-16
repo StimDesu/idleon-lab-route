@@ -2,6 +2,8 @@
 
 Browser tool for planning the World 4 Laboratory Mainframe circuit. It shows all 18 current Mainframe bonuses and 24 jewels at their data coordinates, imports character Lab levels and current positions, and searches for a connected placement covering the most available nodes.
 
+**Live page:** https://stimdesu.github.io/idleon-lab-route/
+
 ## Use
 
 Visit the GitHub Pages link, or serve the repository root with a local HTTP server. Paste Raw Game JSON from IdleOn Efficiency, select a JSON file, or load a published profile by username. The profile request goes straight from the browser to `cdn.idleonefficiency.com`. No save data is uploaded to this repository or a project server.
