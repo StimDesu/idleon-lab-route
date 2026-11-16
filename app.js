@@ -1,9 +1,10 @@
-const DATA_URL = './data/lab-layout.json';
+const ASSET_ROOT = 'https://raw.githubusercontent.com/Morta1/IdleonToolbox/48cb4ee697988ec5eac14ba97142add6296505b2/public/data';
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-let layout;
+const layout = window.IDLEON_LAB_LAYOUT;
 let characters = [{ name: 'Персонаж 1', labLevel: 0, current: null, lineWidth: 50, imported: false }];
 let acquiredJewels = new Set();
+let selectedTargets = new Set((layout?.bonuses || []).map((entry) => `b${entry.id}`));
 let route = null;
 let statusTimer;
 
@@ -61,6 +62,7 @@ function importSave(value, source) {
     const parsed = parseSave(value);
     characters = parsed.characters;
     acquiredJewels = new Set(parsed.jewelFlags.flatMap((flag, index) => Number(flag) === 1 ? [index] : []));
+    selectedTargets = new Set([...(layout?.bonuses || []).map((entry) => `b${entry.id}`), ...[...acquiredJewels].map((id) => `j${id}`)]);
     renderCharacters();
     renderJewels();
     calculateRoute();
@@ -101,12 +103,14 @@ function renderCharacters() {
 }
 
 function renderJewels() {
+  if (!layout) return;
   $('#jewel-controls').innerHTML = layout.jewels.map((jewel) => `<label class="jewel-toggle">
     <input type="checkbox" data-jewel="${jewel.id}" ${acquiredJewels.has(jewel.id) ? 'checked' : ''}>
     <span>${escapeHtml(jewel.name)}</span></label>`).join('');
   $('#jewel-controls').querySelectorAll('[data-jewel]').forEach((input) => input.addEventListener('change', () => {
     const id = Number(input.dataset.jewel);
-    if (input.checked) acquiredJewels.add(id); else acquiredJewels.delete(id);
+    if (input.checked) { acquiredJewels.add(id); selectedTargets.add(`j${id}`); }
+    else { acquiredJewels.delete(id); selectedTargets.delete(`j${id}`); }
     calculateRoute();
   }));
 }
@@ -131,14 +135,17 @@ function lineWidths(site = null) {
 function targetRanges(rangeMods) {
   const px = Number($('#rangePx').value) || 0;
   const pct = Number($('#rangePct').value) || 0;
+  const safety = Math.max(0, Number($('#precision').value) || 0);
   const range = (base, fixed = false) => fixed ? base : Math.floor(80 * (1 + (rangeMods.pct + pct) / 100) + rangeMods.px + px);
-  const targets = layout.bonuses.map((entry) => ({ ...entry, type: 'bonus', key: `b${entry.id}`, baseRange: entry.baseRange || 80,
-    reach: range(entry.baseRange || 80, entry.id === 8 || entry.id === 13) }));
-  layout.jewels.filter((entry) => acquiredJewels.has(entry.id)).forEach((entry) => {
+  const targets = layout.bonuses.map((entry) => ({ ...entry, type: 'bonus', key: `b${entry.id}`, eligible: true,
+    selected: selectedTargets.has(`b${entry.id}`), reach: range(entry.baseRange || 80, entry.id === 8 || entry.id === 13) }));
+  layout.jewels.forEach((entry) => {
     const fixed = entry.id === 9 || entry.id === 19 || entry.id >= 21;
     const base = entry.id >= 21 ? 100 : 80;
-    targets.push({ ...entry, type: 'jewel', key: `j${entry.id}`, baseRange: base, reach: range(base, fixed) });
+    targets.push({ ...entry, type: 'jewel', key: `j${entry.id}`, eligible: acquiredJewels.has(entry.id),
+      selected: selectedTargets.has(`j${entry.id}`), reach: range(base, fixed) });
   });
+  targets.forEach((target) => { target.safeReach = Math.max(0, target.reach - safety); });
   return targets;
 }
 
@@ -166,49 +173,74 @@ function buildCandidates(targets) {
 function searchRoute(targets, widths) {
   const sites = buildCandidates(targets);
   if (!widths.length || !sites.length) return { positions: [], targets, connected: [], score: 0 };
-  const coverage = sites.map((site) => targets.reduce((mask, target, index) => gameDistance(site, target) < target.reach ? mask | (1n << BigInt(index)) : mask, 0n));
+  const coverage = sites.map((site) => targets.reduce((masks, target, index) => {
+    if (!target.eligible) return masks;
+    const distance = gameDistance(site, target);
+    const bit = 1n << BigInt(index);
+    return {
+      active: distance < target.reach ? masks.active | bit : masks.active,
+      score: target.selected && distance < target.safeReach ? masks.score | bit : masks.score
+    };
+  }, { active: 0n, score: 0n }));
   const widthsAtSite = sites.map((site) => lineWidths(site));
-  const ordered = $('#order').value === 'wide'
+  const mode = $('#order').value;
+  const ordered = mode === 'wide'
     ? widths.map((width, index) => ({ width, index })).sort((a, b) => b.width - a.width).map((entry) => entry.index)
     : widths.map((_, index) => index);
-  const beamLimit = 72;
+  const optimizingOrder = mode === 'optimal';
+  const safety = Math.max(0, Number($('#precision').value) || 0);
+  const beamLimit = optimizingOrder ? 48 : 72;
   const getWidth = (characterId, siteId) => widthsAtSite[siteId][characterId];
-  let beam = [];
-  for (let siteId = 0; siteId < sites.length; siteId++) {
-    const charId = ordered[0];
-    if (gameDistance(layout.origin, sites[siteId]) < getWidth(charId, siteId)) beam.push({ positions: [siteId], charIds: [charId], mask: coverage[siteId] });
+  const selectedTotal = targets.filter((target) => target.eligible && target.selected).length;
+  const compare = (a, b) => countBits(b.scoreMask) - countBits(a.scoreMask) || countBits(b.activeMask) - countBits(a.activeMask) || b.margin - a.margin;
+  let beam = [], best = { positions: [], charIds: [], activeMask: 0n, scoreMask: 0n, margin: 0 };
+  const firstCandidates = optimizingOrder ? widths.map((_, index) => index) : [ordered[0]];
+  for (const charId of firstCandidates) for (let siteId = 0; siteId < sites.length; siteId++) {
+    const reach = getWidth(charId, siteId) - safety;
+    const distance = gameDistance(layout.origin, sites[siteId]);
+    if (reach > 0 && distance < reach) beam.push({ positions: [siteId], charIds: [charId], usedMask: 1n << BigInt(charId), activeMask: coverage[siteId].active,
+      scoreMask: coverage[siteId].score, margin: reach - distance });
   }
-  beam.sort((a, b) => countBits(b.mask) - countBits(a.mask));
-  beam = beam.slice(0, beamLimit);
-  for (let step = 1; step < ordered.length && beam.length; step++) {
-    const charId = ordered[step];
+  beam.sort(compare); beam = beam.slice(0, beamLimit);
+  if (beam[0] && compare(beam[0], best) < 0) best = beam[0];
+  for (let step = 1; step < widths.length && beam.length; step++) {
     const next = [];
-    for (const state of beam) for (let siteId = 0; siteId < sites.length; siteId++) {
-      const width = getWidth(charId, siteId);
-      let linked = false;
-      for (const previousId of state.positions) if (gameDistance(sites[previousId], sites[siteId]) < width) { linked = true; break; }
-      if (linked) next.push({ positions: [...state.positions, siteId], charIds: [...state.charIds, charId], mask: state.mask | coverage[siteId] });
+    for (const state of beam) {
+      const nextChars = optimizingOrder ? widths.map((_, index) => index).filter((index) => !(state.usedMask & (1n << BigInt(index)))) : [ordered[step]];
+      for (const charId of nextChars) for (let siteId = 0; siteId < sites.length; siteId++) {
+        const reach = getWidth(charId, siteId) - safety;
+        if (reach <= 0) continue;
+        let closest = Infinity;
+        for (const previousId of state.positions) closest = Math.min(closest, gameDistance(sites[previousId], sites[siteId]));
+        if (closest >= reach) continue;
+        const usedMask = state.usedMask | (1n << BigInt(charId));
+        next.push({ positions: [...state.positions, siteId], charIds: [...state.charIds, charId], usedMask,
+          activeMask: state.activeMask | coverage[siteId].active, scoreMask: state.scoreMask | coverage[siteId].score,
+          margin: state.margin + reach - closest });
+      }
     }
-    next.sort((a, b) => countBits(b.mask) - countBits(a.mask));
+    next.sort(compare);
     const diverse = [], seen = new Set();
     for (const state of next) {
-      const key = `${state.mask.toString(16)}:${state.positions[state.positions.length - 1]}`;
+      const key = `${state.usedMask.toString(16)}:${state.activeMask.toString(16)}:${state.scoreMask.toString(16)}:${state.positions.join('.')}`;
       if (seen.has(key)) continue;
       seen.add(key); diverse.push(state);
       if (diverse.length >= beamLimit) break;
     }
     beam = diverse;
+    if (beam[0] && compare(beam[0], best) < 0) best = beam[0];
   }
-  const best = beam.reduce((a, b) => !a || countBits(b.mask) > countBits(a.mask) ? b : a, null);
-  if (!best) return { positions: [], targets, connected: [], score: 0 };
-  const connected = targets.filter((_, index) => Boolean(best.mask & (1n << BigInt(index))));
-  return { positions: best.positions.map((siteId, index) => ({ ...sites[siteId], characterId: best.charIds[index] })), targets, connected, score: countBits(best.mask) };
+  const connected = targets.filter((target, index) => target.eligible && Boolean(best.activeMask & (1n << BigInt(index))));
+  const selectedConnected = targets.filter((target, index) => target.eligible && target.selected && Boolean(best.scoreMask & (1n << BigInt(index))));
+  return { positions: best.positions.map((siteId, index) => ({ ...sites[siteId], characterId: best.charIds[index] })), targets, connected,
+    score: countBits(best.scoreMask), selectedTotal, selectedConnected };
 }
 
 function calculateRoute() {
+  if (!layout) return showStatus('Карта узлов не загружена. Обновите страницу.', true);
   const widths = lineWidths();
   let modifiers = { pct: 0, px: 0 }, result;
-  for (let iteration = 0; iteration < 4; iteration++) {
+  for (let iteration = 0; iteration < 8; iteration++) {
     const targets = targetRanges(modifiers);
     result = searchRoute(targets, widths);
     const hasViral = result.connected.some((target) => target.type === 'bonus' && target.id === 13);
@@ -226,12 +258,27 @@ function drawRoute(widths) {
   const svg = $('#map');
   if (!route) return;
   const connectedKeys = new Set(route.connected.map((target) => target.key));
+  const precision = Math.max(0, Number($('#precision').value) || 0);
+  const distToRoute = (target) => route.positions.reduce((best, point) => Math.min(best, gameDistance(point, target)), Infinity);
+  let margins = route.connected.map((target) => target.reach - distToRoute(target));
+  for (let i = 0; i < route.positions.length; i++) {
+    const point = route.positions[i];
+    const reach = lineWidths(point)[point.characterId];
+    let dist = Infinity;
+    if (i === 0) dist = gameDistance(layout.origin, point);
+    else for (let j = 0; j < i; j++) dist = Math.min(dist, gameDistance(point, route.positions[j]));
+    margins.push(reach - dist);
+  }
+  const actualMinSlack = margins.length ? Math.max(0, Math.floor(Math.min(...margins))) : 0;
   const targetSvg = (entry, type) => {
     const active = connectedKeys.has(`${type === 'bonus' ? 'b' : 'j'}${entry.id}`);
-    const radius = type === 'bonus' ? 11 : 7;
-    const color = active ? '#c6f36b' : (type === 'bonus' ? '#506274' : '#567b99');
+    const locked = type === 'jewel' && !acquiredJewels.has(entry.id);
     const label = `${type === 'bonus' ? 'B' : 'J'}${entry.id}`;
-    return `<g class="target ${type} ${active ? 'active' : ''}" transform="translate(${entry.x},${entry.y})"><title>${escapeHtml(entry.name)}${type === 'jewel' && !acquiredJewels.has(entry.id) ? ' · не открыт' : ''} · ${entry.x}, ${entry.y}</title><circle r="${radius}" fill="${color}"/><text y="3" text-anchor="middle">${label}</text></g>`;
+    const icon = type === 'bonus'
+      ? `<image class="target-icon" href="${ASSET_ROOT}/LabBonus${entry.id}.png" x="-15" y="-15" width="30" height="30" preserveAspectRatio="xMidYMid meet"/>`
+      : `<path d="M0-12 10-4 7 9 0 14-7 9-10-4Z" fill="${locked ? '#445263' : '#77cbe0'}" stroke="${active ? '#d4ff84' : '#c3e6ef'}" stroke-width="2"/>`;
+    const opacity = locked ? '.38' : '1';
+    return `<g class="target ${type} ${active ? 'active' : ''}" transform="translate(${entry.x},${entry.y})" opacity="${opacity}"><title>${escapeHtml(entry.name)}${locked ? ' · не открыт' : ''} · ${entry.x}, ${entry.y}</title><circle r="17" fill="${active ? '#c6f36b' : '#233442'}" stroke="${active ? '#efffc9' : '#7e91a4'}" stroke-width="2"/>${icon}<text y="26" text-anchor="middle">${label}</text></g>`;
   };
   const targetMarkup = layout.jewels.map((entry) => targetSvg(entry, 'jewel')).join('') + layout.bonuses.map((entry) => targetSvg(entry, 'bonus')).join('');
   let lines = `<line class="link" x1="${layout.origin.x}" y1="${layout.origin.y}" x2="${route.positions[0]?.x ?? layout.origin.x}" y2="${route.positions[0]?.y ?? layout.origin.y}"/>`;
@@ -242,17 +289,34 @@ function drawRoute(widths) {
     lines += `<line class="link" x1="${parent.x}" y1="${parent.y}" x2="${point.x}" y2="${point.y}"/>`;
   }
   const players = route.positions.map((point, index) => `<g class="player" transform="translate(${point.x},${point.y})"><title>${escapeHtml(characters[point.characterId]?.name || `Персонаж ${index + 1}`)} · ширина ${widths[point.characterId]} px</title><circle r="8"/><text y="3" text-anchor="middle">${index + 1}</text></g>`).join('');
-  svg.innerHTML = `<text class="origin-label" x="${layout.origin.x + 10}" y="${layout.origin.y + 17}">Prism · 43, 229</text>${lines}${targetMarkup}${players}`;
-  $('#lit-count').textContent = `${route.score} / ${route.targets.length}`;
+  const grid = [];
+  for (let x = 0; x <= 2100; x += 100) grid.push(`<line class="map-grid" x1="${x}" y1="0" x2="${x}" y2="470"/>`);
+  for (let y = 0; y <= 450; y += 50) grid.push(`<line class="map-grid" x1="0" y1="${y}" x2="2110" y2="${y}"/>`);
+  const current = characters.map((character) => character.current ? `<g class="current-player" transform="translate(${character.current.x},${character.current.y})"><title>Текущая позиция: ${escapeHtml(character.name)} · ${Math.round(character.current.x)}, ${Math.round(character.current.y)}</title><circle r="5"/></g>` : '').join('');
+  svg.innerHTML = `<image class="map-bg" href="${ASSET_ROOT}/LabBG.png" x="0" y="0" width="2110" height="470" preserveAspectRatio="none"/><g>${grid.join('')}</g><text class="origin-label" x="${layout.origin.x + 14}" y="${layout.origin.y + 28}">Prism · 43, 229</text>${lines}${current}${targetMarkup}${players}`;
+  $('#lit-count').textContent = `${route.score} / ${route.selectedTotal}`;
   $('#player-count').textContent = String(route.positions.length);
+  $('#accuracy').textContent = `${actualMinSlack} px`;
   $('#active-nodes').innerHTML = [
     ...layout.bonuses.map((entry) => ({ ...entry, type: 'bonus' })),
     ...layout.jewels.map((entry) => ({ ...entry, type: 'jewel' }))
   ].map((entry) => {
-    const active = connectedKeys.has(`${entry.type === 'bonus' ? 'b' : 'j'}${entry.id}`);
+    const key = `${entry.type === 'bonus' ? 'b' : 'j'}${entry.id}`;
+    const active = connectedKeys.has(key);
     const locked = entry.type === 'jewel' && !acquiredJewels.has(entry.id);
-    return `<div class="node-line ${active ? 'lit' : ''}"><span class="node-id">${entry.type === 'bonus' ? 'B' : 'J'}${String(entry.id).padStart(2, '0')}</span><div><strong>${escapeHtml(entry.name)}</strong><small>${entry.x}, ${entry.y} px · ${locked ? 'не открыт' : active ? 'подключён' : 'вне охвата'}</small></div><span class="node-state">${active ? '●' : '○'}</span></div>`;
+    const target = route.targets.find((item) => item.key === key);
+    const nearest = target ? distToRoute(target) : Infinity;
+    const slack = target ? Math.floor(target.reach - nearest) : -Infinity;
+    const gap = Number.isFinite(slack) ? `${Math.max(0, -slack)} px` : '—';
+    const detail = locked ? 'не открыт' : active ? `подключён · запас ${slack} px` : selectedTargets.has(key) ? `не хватает ${gap}` : 'цель отключена';
+    const icon = entry.type === 'bonus' ? `<img class="node-icon" loading="lazy" src="${ASSET_ROOT}/LabBonus${entry.id}.png" alt="" onerror="this.style.display='none'">` : '<span class="diamond" aria-hidden="true"></span>';
+    const status = active ? `● ${slack} px` : (locked ? 'закрыт' : selectedTargets.has(key) ? gap : 'выкл.');
+    return `<div class="node-line ${active ? 'lit' : ''}"><span class="node-id">${entry.type === 'bonus' ? 'B' : 'J'}${String(entry.id).padStart(2, '0')}</span><label class="node-check" title="Учитывать как целевой узел"><input class="target-check" data-target="${key}" type="checkbox" ${selectedTargets.has(key) ? 'checked' : ''} ${locked ? 'disabled' : ''} aria-label="Целевой узел ${escapeHtml(entry.name)}"></label>${icon}<div><strong>${escapeHtml(entry.name)}</strong><small>${entry.x}, ${entry.y} px · ${detail}</small></div><span class="node-state">${status}</span></div>`;
   }).join('');
+  $('#active-nodes').querySelectorAll('[data-target]').forEach((checkbox) => checkbox.addEventListener('change', () => {
+    if (checkbox.checked) selectedTargets.add(checkbox.dataset.target); else selectedTargets.delete(checkbox.dataset.target);
+    calculateRoute();
+  }));
 }
 
 $('#load-json').addEventListener('click', () => importSave($('#raw-json').value, 'raw JSON'));
@@ -274,6 +338,5 @@ $('#solve').addEventListener('click', calculateRoute);
 $('#order').addEventListener('change', calculateRoute);
 document.querySelectorAll('[data-recalc]').forEach((input) => input.addEventListener('input', calculateRoute));
 
-fetch(DATA_URL).then((response) => { if (!response.ok) throw new Error('Не получилось загрузить карту Laboratory.'); return response.json(); })
-  .then((data) => { layout = data; renderCharacters(); renderJewels(); calculateRoute(); })
-  .catch((error) => showStatus(error.message, true));
+if (!layout) showStatus('Встроенная карта Laboratory не загрузилась. Обновите страницу.', true);
+else { renderCharacters(); renderJewels(); calculateRoute(); }
